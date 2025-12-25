@@ -1,0 +1,316 @@
+package com.example.sqlmy
+
+import android.content.ContentValues
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+
+// ================= DATA =================
+
+data class User(
+    val id: Int,
+    val name: String,
+    val age: Int,
+    val gender: String
+)
+
+// ================= ACTIVITY =================
+
+class MainActivity : ComponentActivity() {
+
+    private val dbHelper by lazy { DatabaseHelper(this) }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            MaterialTheme {
+                Surface(Modifier.fillMaxSize()) {
+                    UserListScreen(dbHelper)
+                }
+            }
+        }
+    }
+}
+
+// ================= DATABASE =================
+
+fun tambahUser(db: DatabaseHelper, nama: String, usia: Int, gender: String) {
+    if (nama.isBlank() || usia <= 0 || gender.isBlank()) return
+    val values = ContentValues().apply {
+        put(DatabaseHelper.NAME, nama)
+        put(DatabaseHelper.AGE, usia)
+        put(DatabaseHelper.GENDER, gender)
+    }
+    db.writableDatabase.insert(DatabaseHelper.TABLE_NAME, null, values)
+}
+
+fun ambilUser(db: DatabaseHelper): List<User> {
+    val list = mutableListOf<User>()
+    val cursor = db.readableDatabase.query(
+        DatabaseHelper.TABLE_NAME,
+        null, null, null, null, null,
+        "${DatabaseHelper.ID} DESC"
+    )
+    while (cursor.moveToNext()) {
+        list.add(
+            User(
+                cursor.getInt(cursor.getColumnIndexOrThrow(DatabaseHelper.ID)),
+                cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.NAME)),
+                cursor.getInt(cursor.getColumnIndexOrThrow(DatabaseHelper.AGE)),
+                cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.GENDER))
+            )
+        )
+    }
+    cursor.close()
+    return list
+}
+
+fun hapusUser(db: DatabaseHelper, id: Int) {
+    db.writableDatabase.delete(
+        DatabaseHelper.TABLE_NAME,
+        "${DatabaseHelper.ID}=?",
+        arrayOf(id.toString())
+    )
+}
+
+fun updateUser(db: DatabaseHelper, user: User) {
+    val values = ContentValues().apply {
+        put(DatabaseHelper.NAME, user.name)
+        put(DatabaseHelper.AGE, user.age)
+        put(DatabaseHelper.GENDER, user.gender)
+    }
+    db.writableDatabase.update(
+        DatabaseHelper.TABLE_NAME,
+        values,
+        "${DatabaseHelper.ID}=?",
+        arrayOf(user.id.toString())
+    )
+}
+
+// ================= UI =================
+
+@Composable
+fun UserListScreen(db: DatabaseHelper) {
+
+    var users by remember { mutableStateOf(emptyList<User>()) }
+    var nama by remember { mutableStateOf("") }
+    var usia by remember { mutableStateOf("") }
+    var gender by remember { mutableStateOf("") }
+
+    var editUser by remember { mutableStateOf<User?>(null) }
+    var deleteUser by remember { mutableStateOf<User?>(null) }
+
+    LaunchedEffect(Unit) { users = ambilUser(db) }
+
+    // ===== DIALOG HAPUS =====
+    deleteUser?.let { user ->
+        AlertDialog(
+            onDismissRequest = { deleteUser = null },
+            title = { Text("Konfirmasi") },
+            text = { Text("Apakah Anda yakin ingin menghapus data ini?") },
+            confirmButton = {
+                Button(
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    ),
+                    onClick = {
+                        hapusUser(db, user.id)
+                        users = ambilUser(db)
+                        deleteUser = null
+                    }
+                ) { Text("Hapus") }
+            },
+            dismissButton = {
+                Button(onClick = { deleteUser = null }) {
+                    Text("Batal")
+                }
+            }
+        )
+    }
+
+    // ===== DIALOG EDIT =====
+    editUser?.let {
+        EditUserDialog(
+            user = it,
+            onDismiss = { editUser = null },
+            onConfirm = { updated ->
+                updateUser(db, updated)
+                users = ambilUser(db)
+                editUser = null
+            }
+        )
+    }
+
+    // ===== SCROLL ROOT (AMAN LANDSCAPE) =====
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+
+        item {
+            Text("Tambah Pengguna", style = MaterialTheme.typography.headlineSmall)
+
+            OutlinedTextField(
+                value = nama,
+                onValueChange = { nama = it },
+                label = { Text("Nama") },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
+                value = usia,
+                onValueChange = { if (it.all { c -> c.isDigit() }) usia = it },
+                label = { Text("Usia") },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            GenderDropdown(gender) { gender = it }
+
+            Button(
+                onClick = {
+                    tambahUser(db, nama, usia.toIntOrNull() ?: 0, gender)
+                    nama = ""
+                    usia = ""
+                    gender = ""
+                    users = ambilUser(db)
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Simpan")
+            }
+
+            Divider()
+            Text("Daftar Pengguna", style = MaterialTheme.typography.headlineMedium)
+        }
+
+        items(users, key = { it.id }) { user ->
+            UserItem(
+                user = user,
+                onEdit = { editUser = user },
+                onDelete = { deleteUser = user }
+            )
+        }
+    }
+}
+
+// ================= ITEM =================
+
+@Composable
+fun UserItem(
+    user: User,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Nama: ${user.name}")
+                Text("Usia: ${user.age}")
+                Text("Gender: ${user.gender}")
+            }
+            IconButton(onClick = onEdit) {
+                Icon(Icons.Default.Edit, null)
+            }
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, null)
+            }
+        }
+    }
+}
+
+// ================= EDIT =================
+
+@Composable
+fun EditUserDialog(
+    user: User,
+    onDismiss: () -> Unit,
+    onConfirm: (User) -> Unit
+) {
+    var nama by remember { mutableStateOf(user.name) }
+    var usia by remember { mutableStateOf(user.age.toString()) }
+    var gender by remember { mutableStateOf(user.gender) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit Pengguna") },
+        text = {
+            Column {
+                OutlinedTextField(nama, { nama = it }, label = { Text("Nama") })
+                OutlinedTextField(
+                    usia,
+                    { if (it.all { c -> c.isDigit() }) usia = it },
+                    label = { Text("Usia") }
+                )
+                GenderDropdown(gender) { gender = it }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                onConfirm(
+                    user.copy(
+                        name = nama,
+                        age = usia.toIntOrNull() ?: user.age,
+                        gender = gender
+                    )
+                )
+            }) { Text("Simpan") }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) { Text("Batal") }
+        }
+    )
+}
+
+// ================= DROPDOWN =================
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GenderDropdown(
+    value: String,
+    onChange: (String) -> Unit
+) {
+    val list = listOf("Laki-laki", "Perempuan")
+    var expanded by remember { mutableStateOf(false) }
+
+    ExposedDropdownMenuBox(expanded, { expanded = !expanded }) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Jenis Kelamin") },
+            trailingIcon = {
+                ExposedDropdownMenuDefaults.TrailingIcon(expanded)
+            },
+            modifier = Modifier.menuAnchor().fillMaxWidth()
+        )
+        ExposedDropdownMenu(expanded, { expanded = false }) {
+            list.forEach {
+                DropdownMenuItem(
+                    text = { Text(it) },
+                    onClick = {
+                        onChange(it)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
